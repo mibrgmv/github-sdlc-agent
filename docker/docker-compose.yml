@@ -1,0 +1,24 @@
+services:
+  code-agent:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    env_file:
+      - ../.env
+    environment:
+      - ISSUE_NUMBER=${ISSUE_NUMBER:-1}
+    volumes:
+      - ../:/app
+    command: ["solve", "${ISSUE_NUMBER:-1}"]
+
+  reviewer-agent:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    env_file:
+      - ../.env
+    environment:
+      - PR_NUMBER=${PR_NUMBER:-1}
+    volumes:
+      - ../:/app
+    command: ["review", "${PR_NUMBER:-1}"]

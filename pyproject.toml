@@ -1,0 +1,41 @@
+[project]
+name = "sdlc-agents"
+version = "0.1.0"
+description = "Automated SDLC agents for GitHub"
+requires-python = ">=3.11"
+dependencies = [
+    "openai>=1.0.0",
+    "PyGithub>=2.1.0",
+    "GitPython>=3.1.0",
+    "click>=8.0.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "httpx>=0.25.0",
+]
+
+[project.scripts]
+code-agent = "src.cli:main"
+reviewer-agent = "src.cli:review"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+ignore_missing_imports = true
