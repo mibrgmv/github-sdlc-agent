@@ -145,5 +145,4 @@ Please review the changes and provide your assessment."""
 
         body = "".join(body_parts)
 
-        event = "APPROVE" if approved else "REQUEST_CHANGES"
-        self.github.create_pr_review(pr_number, body, event)
+        self.github.add_pr_comment(pr_number, body)

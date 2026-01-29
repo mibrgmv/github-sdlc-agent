@@ -1,6 +1,8 @@
 import hashlib
 import hmac
 import logging
+import re
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
@@ -8,9 +10,12 @@ from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from src.agents.code_agent import CodeAgent
 from src.agents.reviewer_agent import ReviewerAgent
 from src.config import get_settings
+from src.github_client import GitHubClient
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+ITERATION_MARKER = "[SDLC-ITERATION:"
 
 
 @asynccontextmanager
@@ -33,6 +38,26 @@ def verify_signature(payload: bytes, signature: str, secret: str) -> bool:
     return hmac.compare_digest(expected, signature)
 
 
+def get_iteration_count(github: GitHubClient, pr_number: int) -> int:
+    comments = github.get_pr_comments(pr_number)
+    for comment in reversed(comments):
+        body = comment.get("body", "")
+        if ITERATION_MARKER in body:
+            match = re.search(r"\[SDLC-ITERATION:(\d+)\]", body)
+            if match:
+                return int(match.group(1))
+    return 0
+
+
+def extract_issue_number(body: str) -> int | None:
+    patterns = [r"#(\d+)", r"closes #(\d+)", r"fixes #(\d+)", r"resolves #(\d+)"]
+    for pattern in patterns:
+        match = re.search(pattern, body.lower())
+        if match:
+            return int(match.group(1))
+    return None
+
+
 def process_issue(issue_number: int, repo: str):
     logger.info(f"Processing issue #{issue_number} in {repo}")
     try:
@@ -50,9 +75,38 @@ def process_pr_review(pr_number: int, repo: str):
     try:
         settings = get_settings()
         settings.target_repo = repo
+
+        github = GitHubClient(settings)
+        pr = github.get_pull_request(pr_number)
+
+        iteration = get_iteration_count(github, pr_number) + 1
+        logger.info(f"PR #{pr_number} iteration: {iteration}/{settings.max_iterations}")
+
+        if iteration > settings.max_iterations:
+            logger.warning(f"PR #{pr_number} reached max iterations ({settings.max_iterations}), stopping")
+            github.add_pr_comment(
+                pr_number,
+                f"⚠️ **Max iterations reached ({settings.max_iterations})**. Stopping automatic fixes."
+            )
+            return
+
         agent = ReviewerAgent(settings)
         result = agent.run(pr_number)
         logger.info(f"PR #{pr_number} review result: {result}")
+
+        github.add_pr_comment(pr_number, f"<!-- {ITERATION_MARKER}{iteration}] -->")
+
+        if result.get("success") and not result.get("approved", False):
+            issue_number = extract_issue_number(pr.body or "")
+            if issue_number and result.get("issues_count", 0) > 0:
+                logger.info(f"PR #{pr_number} not approved, triggering fix cycle for issue #{issue_number}")
+                time.sleep(2)
+                process_issue(issue_number, repo)
+            else:
+                logger.info(f"PR #{pr_number} not approved but no linked issue found or no issues to fix")
+        elif result.get("approved"):
+            logger.info(f"PR #{pr_number} approved!")
+
     except Exception as e:
         logger.error(f"Error reviewing PR #{pr_number}: {e}")
 
