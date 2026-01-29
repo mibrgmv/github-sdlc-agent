@@ -1,4 +1,16 @@
 services:
+  server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    env_file:
+      - ../.env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../:/app
+    command: ["python", "-m", "uvicorn", "src.server:app", "--host", "0.0.0.0", "--port", "8000"]
+
   code-agent:
     build:
       context: ..
@@ -9,7 +21,7 @@ services:
       - ISSUE_NUMBER=${ISSUE_NUMBER:-1}
     volumes:
       - ../:/app
-    command: ["solve", "${ISSUE_NUMBER:-1}"]
+    command: ["python", "-m", "src.cli", "solve", "${ISSUE_NUMBER:-1}"]
 
   reviewer-agent:
     build:
@@ -21,4 +33,4 @@ services:
       - PR_NUMBER=${PR_NUMBER:-1}
     volumes:
       - ../:/app
-    command: ["review", "${PR_NUMBER:-1}"]
+    command: ["python", "-m", "src.cli", "review", "${PR_NUMBER:-1}"]

@@ -10,4 +10,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 RUN pip install --no-cache-dir -e .
 
-ENTRYPOINT ["python", "-m", "src.cli"]
+CMD ["python", "-m", "src.cli"]

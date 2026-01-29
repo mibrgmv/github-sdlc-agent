@@ -4,131 +4,203 @@
 
 ## Компоненты
 
-- **Code Agent** — CLI-инструмент, который читает Issue, анализирует требования, генерирует код и создаёт Pull Request
-- **AI Reviewer Agent** — автоматический ревьюер, который запускается в GitHub Actions и анализирует PR
+- **Code Agent** — читает Issue, анализирует требования, генерирует код и создаёт Pull Request
+- **AI Reviewer Agent** — анализирует PR и оставляет code review
+- **Webhook Server** — принимает события от GitHub и запускает агентов автоматически
 
-## Требования
+## Режимы работы
 
-- Python 3.11+
-- GitHub Token с правами на репозиторий
-- OpenAI API Key (или совместимый API)
+| Режим | Описание | Когда использовать |
+|-------|----------|-------------------|
+| **Webhook Server** | Автоматическая обработка событий | Production, облако |
+| **CLI** | Ручной запуск агентов | Отладка, разовые задачи |
+| **GitHub Actions** | Запуск через CI/CD GitHub | Если не нужен свой сервер |
 
-## Установка и запуск
+---
 
-### Вариант 1: Локально
+## Быстрый старт: Webhook Server + ngrok (локально)
+
+### 1. Получить API ключи
+
+**Groq (LLM, бесплатно):**
+1. https://console.groq.com → Create API Key
+
+**GitHub App:**
+1. GitHub → Settings → Developer settings → GitHub Apps → **New GitHub App**
+2. Заполнить:
+   - **GitHub App name:** `SDLC Agent` (уникальное имя)
+   - **Homepage URL:** `https://github.com`
+3. **Webhook:**
+   - **Active:** ✅ Включить
+   - **Webhook URL:** `https://your-ngrok-url.ngrok.io/webhook` (заполним позже)
+   - **Webhook secret:** придумать секрет (например `mysecret123`)
+4. **Permissions → Repository permissions:**
+   - Contents: Read and write
+   - Issues: Read and write
+   - Pull requests: Read and write
+   - Metadata: Read-only
+5. **Subscribe to events:**
+   - ✅ Issues
+   - ✅ Pull request
+6. **Where can this GitHub App be installed:** Any account
+7. **Create GitHub App**
+8. Сохранить **App ID** (вверху страницы)
+9. **Generate a private key** → скачать `.pem` файл
+10. **Install App** → выбрать репозиторий
+
+### 2. Настроить переменные окружения
 
 ```bash
-# Клонировать репозиторий
-git clone <repo-url>
-cd mega-school-26
-
-# Создать виртуальное окружение
-python3.11 -m venv .venv
-source .venv/bin/activate
-
-# Установить зависимости
-pip install -r requirements.txt
-pip install -e .
-
-# Настроить переменные окружения
 cp .env.example .env
-# Отредактировать .env и заполнить значения
-
-# Запустить Code Agent для issue
-python -m src.cli solve <issue_number> --repo owner/repo
-
-# Запустить Reviewer для PR
-python -m src.cli review <pr_number> --repo owner/repo
 ```
 
-### Вариант 2: Docker
+Заполнить `.env`:
+```bash
+# Groq
+OPENAI_API_KEY=gsk_your_key
+OPENAI_MODEL=llama-3.3-70b-versatile
+OPENAI_BASE_URL=https://api.groq.com/openai/v1
+
+# GitHub App
+GITHUB_APP_ID=123456
+GITHUB_APP_PRIVATE_KEY_PATH=./private-key.pem
+GITHUB_APP_INSTALLATION_ID=12345678
+GITHUB_WEBHOOK_SECRET=mysecret123
+```
+
+### 3. Запустить сервер
+
+```bash
+cd docker
+docker-compose build
+docker-compose up server
+```
+
+Сервер запустится на `http://localhost:8000`
+
+### 4. Пробросить через ngrok
+
+В новом терминале:
+```bash
+# Установить ngrok: https://ngrok.com/download
+ngrok http 8000
+```
+
+ngrok выдаст URL типа `https://abc123.ngrok-free.app`
+
+### 5. Настроить Webhook URL в GitHub App
+
+1. GitHub → Settings → Developer settings → GitHub Apps → твой app
+2. В поле **Webhook URL** вставить: `https://abc123.ngrok-free.app/webhook`
+3. Save changes
+
+### 6. Тестирование
+
+1. Создать Issue в репозитории где установлен App:
+   ```
+   Title: Create hello.py
+   Body: Create a file hello.py with function greet() that returns "Hello!"
+   ```
+2. Смотреть логи сервера — он получит webhook и создаст PR
+3. При создании PR — сервер автоматически сделает review
+
+---
+
+## CLI режим (ручной запуск)
 
 ```bash
 cd docker
 
-# Настроить переменные окружения
-export GITHUB_TOKEN=ghp_your_token
-export OPENAI_API_KEY=sk-your-key
-export TARGET_REPO=owner/repo
-
-# Запустить Code Agent
+# Обработать Issue
 ISSUE_NUMBER=1 docker-compose run code-agent
 
-# Запустить Reviewer
+# Ревью PR
 PR_NUMBER=1 docker-compose run reviewer-agent
 ```
 
-### Вариант 3: GitHub Actions (автоматически)
+Или локально:
+```bash
+source .venv/bin/activate
+pip install -r requirements.txt && pip install -e .
 
-1. Добавить секреты в репозиторий:
-   - `OPENAI_API_KEY` — ключ OpenAI API
-   - `OPENAI_BASE_URL` — (опционально) URL альтернативного API
+python -m src.cli solve 1 --repo username/repo
+python -m src.cli review 1 --repo username/repo
+```
 
-2. Создать Issue в репозитории — Code Agent автоматически создаст PR
+---
 
-3. При создании/обновлении PR — AI Reviewer автоматически проведёт ревью
+## GitHub Actions режим
+
+Если не хочется поднимать свой сервер — агенты могут работать через GitHub Actions.
+
+**Настройка секретов в репозитории:**
+
+Settings → Secrets and variables → Actions:
+- `OPENAI_API_KEY` — ключ Groq
+- `GH_APP_ID` — ID приложения
+- `GH_APP_PRIVATE_KEY` — содержимое .pem файла
+- `GH_APP_INSTALLATION_ID` — ID установки
+
+**Variables:**
+- `OPENAI_MODEL` = `llama-3.3-70b-versatile`
+- `OPENAI_BASE_URL` = `https://api.groq.com/openai/v1`
+
+При создании Issue или PR workflows запустятся автоматически.
+
+---
+
+## Деплой в облако
+
+Webhook сервер можно задеплоить в:
+- **Yandex Cloud Functions** (serverless)
+- **Cloud.ru**
+- **Любой VPS** с Docker
+
+Для production замените ngrok URL на реальный домен сервера.
+
+---
 
 ## Переменные окружения
 
 | Переменная | Описание | Обязательная |
 |------------|----------|--------------|
-| `GITHUB_TOKEN` | GitHub токен | Да |
-| `OPENAI_API_KEY` | OpenAI API ключ | Да |
-| `TARGET_REPO` | Репозиторий (owner/repo) | Да |
-| `OPENAI_MODEL` | Модель (по умолчанию gpt-4o-mini) | Нет |
-| `OPENAI_BASE_URL` | URL альтернативного API | Нет |
-| `MAX_ITERATIONS` | Макс. итераций (по умолчанию 5) | Нет |
+| `OPENAI_API_KEY` | API ключ (Groq/OpenAI) | Да |
+| `OPENAI_MODEL` | Модель LLM | Да |
+| `OPENAI_BASE_URL` | URL API | Для Groq |
+| `GITHUB_APP_ID` | ID GitHub App | Да |
+| `GITHUB_APP_PRIVATE_KEY_PATH` | Путь к .pem | Да |
+| `GITHUB_APP_INSTALLATION_ID` | ID установки | Да |
+| `GITHUB_WEBHOOK_SECRET` | Секрет для webhook | Для сервера |
+| `GITHUB_TOKEN` | Personal Access Token | Альтернатива App |
 
-## Тестирование
-
-### Ручное тестирование Code Agent
-
-1. Создать тестовый репозиторий на GitHub
-2. Настроить переменные окружения
-3. Создать Issue с описанием задачи, например:
-   ```
-   Title: Add hello function
-   Body: Create a file hello.py with a function that returns "Hello, World!"
-   ```
-4. Запустить:
-   ```bash
-   python -m src.cli solve 1 --repo your-username/test-repo
-   ```
-5. Проверить созданный PR в репозитории
-
-### Ручное тестирование Reviewer Agent
-
-1. Создать PR в тестовом репозитории
-2. Запустить:
-   ```bash
-   python -m src.cli review 1 --repo your-username/test-repo
-   ```
-3. Проверить комментарий-ревью в PR
-
-### Тестирование полного цикла через GitHub Actions
-
-1. Запушить код в репозиторий
-2. Добавить секреты `OPENAI_API_KEY` в Settings → Secrets and variables → Actions
-3. Создать Issue — workflow автоматически создаст PR
-4. Проверить, что AI Reviewer оставил комментарий в PR
+---
 
 ## Структура проекта
 
 ```
 ├── src/
 │   ├── agents/
-│   │   ├── code_agent.py    # Code Agent
+│   │   ├── code_agent.py     # Code Agent
 │   │   └── reviewer_agent.py # AI Reviewer
-│   ├── cli.py               # CLI интерфейс
-│   ├── config.py            # Конфигурация
-│   ├── github_client.py     # Работа с GitHub API
-│   └── llm_client.py        # Работа с LLM
+│   ├── server.py             # Webhook сервер (FastAPI)
+│   ├── cli.py                # CLI интерфейс
+│   ├── config.py             # Конфигурация
+│   ├── github_client.py      # GitHub API + App auth
+│   └── llm_client.py         # LLM клиент
 ├── docker/
 │   ├── Dockerfile
 │   └── docker-compose.yml
 ├── .github/workflows/
-│   ├── on_issue.yml         # Workflow для Issue
-│   └── on_pr.yml            # Workflow для PR
-├── requirements.txt
-└── pyproject.toml
+│   ├── on_issue.yml          # Workflow для Issue
+│   └── on_pr.yml             # Workflow для PR
+└── .env.example
 ```
+
+---
+
+## API Endpoints
+
+| Endpoint | Метод | Описание |
+|----------|-------|----------|
+| `/health` | GET | Health check |
+| `/webhook` | POST | GitHub webhook receiver |

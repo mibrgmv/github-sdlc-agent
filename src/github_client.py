@@ -1,4 +1,4 @@
-from github import Github, GithubException
+from github import Auth, Github, GithubException, GithubIntegration
 from github.Issue import Issue
 from github.PullRequest import PullRequest
 from github.Repository import Repository
@@ -8,8 +8,47 @@ from src.config import Settings
 
 class GitHubClient:
     def __init__(self, settings: Settings):
-        self.gh = Github(settings.github_token)
+        self.settings = settings
+        self.gh = self._create_github_client()
         self.repo: Repository = self.gh.get_repo(settings.target_repo)
+
+    def _create_github_client(self) -> Github:
+        if self.settings.use_github_app():
+            auth = Auth.AppAuth(
+                int(self.settings.github_app_id),
+                self.settings.github_app_private_key,
+            )
+            gi = GithubIntegration(auth=auth)
+
+            if self.settings.github_app_installation_id:
+                installation_id = int(self.settings.github_app_installation_id)
+            else:
+                owner = self.settings.target_repo.split("/")[0]
+                installation = gi.get_installations()[0]
+                installation_id = installation.id
+
+            return gi.get_github_for_installation(installation_id)
+
+        return Github(self.settings.github_token)
+
+    def get_installation_token(self) -> str | None:
+        if not self.settings.use_github_app():
+            return self.settings.github_token
+
+        auth = Auth.AppAuth(
+            int(self.settings.github_app_id),
+            self.settings.github_app_private_key,
+        )
+        gi = GithubIntegration(auth=auth)
+
+        if self.settings.github_app_installation_id:
+            installation_id = int(self.settings.github_app_installation_id)
+        else:
+            installation = gi.get_installations()[0]
+            installation_id = installation.id
+
+        token = gi.get_access_token(installation_id)
+        return token.token
 
     def get_issue(self, issue_number: int) -> Issue:
         return self.repo.get_issue(issue_number)

@@ -128,7 +128,8 @@ Please analyze the issue and provide the necessary code changes."""
         existing_prs: list,
     ) -> dict:
         with tempfile.TemporaryDirectory() as tmpdir:
-            repo_url = f"https://x-access-token:{self.settings.github_token}@github.com/{self.settings.target_repo}.git"
+            token = self.github.get_installation_token()
+            repo_url = f"https://x-access-token:{token}@github.com/{self.settings.target_repo}.git"
             repo = Repo.clone_from(repo_url, tmpdir)
 
             default_branch = self.github.get_default_branch()
