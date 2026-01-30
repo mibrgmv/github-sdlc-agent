@@ -18,11 +18,21 @@
 2. Нажать **Install**
 3. Выбрать репозиторий для тестирования
 
-### 2. Получить credentials
+### 2. Подготовить credentials
 
-Запросить у автора:
-- Файл `.env` с настройками
-- Файл `private-key.pem` (ключ GitHub App)
+Создать файл `.env`:
+```bash
+OPENAI_API_KEY=<получить у автора>
+OPENAI_MODEL=llama-3.3-70b-versatile
+OPENAI_BASE_URL=https://api.groq.com/openai/v1
+
+GITHUB_APP_ID=2756616
+GITHUB_APP_PRIVATE_KEY_PATH=/app/private-key.pem
+GITHUB_APP_INSTALLATION_ID=106871180
+GITHUB_WEBHOOK_SECRET=hudfslmkadsoifgh
+```
+
+Файл `private-key.pem` уже есть в репозитории.
 
 ### 3. Запустить сервер
 
