@@ -1,105 +1,75 @@
 # SDLC Agents
 
-Автоматизированная агентная система для полного цикла разработки ПО в GitHub.
+Автоматизированная агентная система для GitHub: генерация кода по Issue и AI code review.
 
 ## Компоненты
 
-- **Code Agent** — читает Issue, анализирует требования, генерирует код и создаёт Pull Request
-- **AI Reviewer Agent** — анализирует PR и оставляет code review
-- **Webhook Server** — принимает события от GitHub и запускает агентов автоматически
+- **Code Agent** — читает Issue, генерирует код, создаёт Pull Request
+- **Reviewer Agent** — анализирует PR, оставляет code review
+- **Webhook Server** — принимает события от GitHub, запускает агентов
 
----
+## Два режима работы
 
-## Быстрый старт
+### 1. Серверный режим (Cloud.ru)
 
-### 1. Установить GitHub App
+Для production-деплоя. Сервер крутится в Cloud.ru, использует их LLM API.
 
-1. Перейти по ссылке: https://github.com/apps/megaschool-slave
-2. Нажать **Install**
-3. Выбрать репозиторий для тестирования
-
-### 2. Подготовить credentials
-
-Создать файл `.env`:
 ```bash
-OPENAI_API_KEY=<получить у автора>
-OPENAI_MODEL=llama-3.3-70b-versatile
-OPENAI_BASE_URL=https://api.groq.com/openai/v1
-
-GITHUB_APP_ID=2756616
+# .env
+GITHUB_APP_ID=...
 GITHUB_APP_PRIVATE_KEY_PATH=/app/private-key.pem
-GITHUB_APP_INSTALLATION_ID=106871180
-GITHUB_WEBHOOK_SECRET=hudfslmkadsoifgh
+GITHUB_APP_INSTALLATION_ID=...
+GITHUB_WEBHOOK_SECRET=...
+
+OPENAI_API_KEY=<cloudru-api-key>
+OPENAI_BASE_URL=https://foundation-models.api.cloud.ru/v1/
+OPENAI_MODEL=qwen3-235b
 ```
 
-Файл `private-key.pem` уже есть в репозитории.
-
-### 3. Запустить сервер
+Доступные модели Cloud.ru: `qwen3-235b`, `qwen3-coder`, `glm-4.5`, `gpt-oss-120b`
 
 ```bash
-# Скачать образ
-docker pull ghcr.io/mibrgmv/sdlc-agent:latest
-
-# Запустить (из папки где лежат .env и private-key.pem)
-docker run -d \
-  --name sdlc-server \
-  -p 8000:8000 \
-  --env-file .env \
-  -v $(pwd)/private-key.pem:/app/private-key.pem:ro \
-  ghcr.io/mibrgmv/sdlc-agent:latest \
-  sh -c "python -m uvicorn src.server:app --host 0.0.0.0 --port 8000"
+docker-compose -f docker/docker-compose.yml up
 ```
 
-### 4. Пробросить через ngrok
+### 2. Локальный режим (VPN)
+
+Для разработки и тестирования. Работает через CLI с любым OpenAI-совместимым провайдером.
 
 ```bash
-ngrok http 8000
+git clone https://github.com/mibrgmv/sdlc-agent.git
+cd sdlc-agent
+
+brew install python@3.13
+
+python3.13 -m venv .venv
+source .venv/bin/activate
+
+pip install -r requirements.txt && pip install -e .
 ```
 
-ngrok выдаст URL типа `https://abc123.ngrok-free.app`
+```bash
+# .env
+GITHUB_APP_ID=...
+GITHUB_APP_PRIVATE_KEY_PATH=./private-key.pem
+GITHUB_APP_INSTALLATION_ID=...
 
-### 5. Обновить Webhook URL
-
-Сообщить автору ngrok URL, либо обновить самостоятельно:
-
-GitHub → Settings → Developer settings → GitHub Apps → megaschool-slave → Webhook URL:
-```
-https://abc123.ngrok-free.app/webhook
-```
-
-### 6. Готово!
-
-Создай Issue в репозитории где установлен App:
-```
-Title: Create hello.py
-Body: Create a file hello.py with function greet() that returns "Hello!"
+OPENAI_API_KEY=<your-api-key>
+OPENAI_MODEL=gpt-4o-mini
+# OPENAI_BASE_URL= (не указывать для OpenAI)
 ```
 
-Агент получит webhook, сгенерирует код и создаст PR. При создании PR — автоматически запустится review.
-
----
-
-## Структура проекта
-
-```
-├── src/
-│   ├── agents/
-│   │   ├── code_agent.py     # Code Agent
-│   │   └── reviewer_agent.py # AI Reviewer
-│   ├── server.py             # Webhook сервер (FastAPI)
-│   ├── cli.py                # CLI интерфейс
-│   ├── config.py             # Конфигурация
-│   ├── github_client.py      # GitHub API + App auth
-│   └── llm_client.py         # LLM клиент
-├── docker/
-│   ├── Dockerfile
-│   └── docker-compose.yml
-└── .env.example
+```bash
+python -m src.cli solve 1 --repo owner/repo
+python -m src.cli review 1 --repo owner/repo
 ```
 
----
+## Установка GitHub App
 
-## API Endpoints
+1. https://github.com/apps/megaschool-slave → Install
+2. Выбрать репозиторий
+
+## API
 
 | Endpoint | Метод | Описание |
 |----------|-------|----------|

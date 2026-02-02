@@ -43,9 +43,9 @@ Guidelines:
 
 
 class CodeAgent:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, repo: str):
         self.settings = settings
-        self.github = GitHubClient(settings)
+        self.github = GitHubClient(settings, repo)
         self.llm = LLMClient(settings)
 
     def run(self, issue_number: int) -> dict:
@@ -129,7 +129,7 @@ Please analyze the issue and provide the necessary code changes."""
     ) -> dict:
         with tempfile.TemporaryDirectory() as tmpdir:
             token = self.github.get_installation_token()
-            repo_url = f"https://x-access-token:{token}@github.com/{self.settings.target_repo}.git"
+            repo_url = f"https://x-access-token:{token}@github.com/{self.github.repo.full_name}.git"
             repo = Repo.clone_from(repo_url, tmpdir)
 
             default_branch = self.github.get_default_branch()

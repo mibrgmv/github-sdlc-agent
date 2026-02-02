@@ -40,9 +40,9 @@ Be constructive and specific in your feedback. If there are no issues, approve t
 
 
 class ReviewerAgent:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, repo: str):
         self.settings = settings
-        self.github = GitHubClient(settings)
+        self.github = GitHubClient(settings, repo)
         self.llm = LLMClient(settings)
 
     def run(self, pr_number: int) -> dict:
