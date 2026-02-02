@@ -31,17 +31,17 @@ def get_iteration_count(github: GitHubClient, pr_number: int) -> int:
     return 0
 
 
-def run_solve(settings: Settings, repo: str, issue_number: int) -> dict:
+def run_solve(settings: Settings, repo: str, issue_number: int, force_new: bool = False) -> dict:
     agent = CodeAgent(settings, repo)
-    return agent.run(issue_number)
+    return agent.run(issue_number, force_new=force_new)
 
 
-def run_review(settings: Settings, repo: str, pr_number: int) -> dict:
+def run_review(settings: Settings, repo: str, pr_number: int, iteration: int = 0) -> dict:
     agent = ReviewerAgent(settings, repo)
-    return agent.run(pr_number)
+    return agent.run(pr_number, iteration)
 
 
-def run_cycle(settings: Settings, repo: str, issue_number: int, on_event=None) -> dict:
+def run_cycle(settings: Settings, repo: str, issue_number: int, on_event=None, force_new: bool = False) -> dict:
     def log(msg):
         if on_event:
             on_event(msg)
@@ -52,7 +52,8 @@ def run_cycle(settings: Settings, repo: str, issue_number: int, on_event=None) -
     for iteration in range(1, settings.max_iterations + 1):
         log(f"Iteration {iteration}/{settings.max_iterations}")
 
-        solve_result = run_solve(settings, repo, issue_number)
+        use_force_new = force_new and iteration == 1
+        solve_result = run_solve(settings, repo, issue_number, force_new=use_force_new)
         if not solve_result.get("success"):
             return {"success": False, "error": solve_result.get("error"), "iteration": iteration}
 
@@ -61,7 +62,7 @@ def run_cycle(settings: Settings, repo: str, issue_number: int, on_event=None) -
 
         time.sleep(2)
 
-        review_result = run_review(settings, repo, pr_number)
+        review_result = run_review(settings, repo, pr_number, iteration)
         if not review_result.get("success"):
             return {"success": False, "error": review_result.get("error"), "iteration": iteration}
 

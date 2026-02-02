@@ -22,13 +22,14 @@ def cli():
 @click.argument("issue_number", type=int)
 @click.option("--repo", required=True, help="Target repository (owner/repo)")
 @click.option("--auto", is_flag=True, help="Run full cycle with review iterations")
-def solve(issue_number: int, repo: str, auto: bool):
+@click.option("--new", is_flag=True, help="Create new PR instead of updating existing")
+def solve(issue_number: int, repo: str, auto: bool, new: bool):
     settings = get_settings()
     validate_settings(settings)
 
     if auto:
         click.echo(f"Running full cycle for issue #{issue_number} in {repo}...")
-        result = run_cycle(settings, repo, issue_number, on_event=click.echo)
+        result = run_cycle(settings, repo, issue_number, on_event=click.echo, force_new=new)
 
         if result.get("approved"):
             click.echo(f"Success! PR approved: {result['pr_url']} (iterations: {result['iteration']})")
@@ -39,7 +40,7 @@ def solve(issue_number: int, repo: str, auto: bool):
             sys.exit(1)
     else:
         click.echo(f"Processing issue #{issue_number} in {repo}...")
-        result = run_solve(settings, repo, issue_number)
+        result = run_solve(settings, repo, issue_number, force_new=new)
 
         if result.get("success"):
             click.echo(f"Success! PR {result['action']}: {result['pr_url']}")

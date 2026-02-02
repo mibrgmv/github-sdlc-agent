@@ -8,11 +8,9 @@
 - **Reviewer Agent** — анализирует PR, оставляет code review
 - **Webhook Server** — принимает события от GitHub, запускает агентов
 
-## Два режима работы
+## Быстрый старт
 
-### 1. Серверный режим (Cloud.ru)
-
-Для production-деплоя. Сервер крутится в Cloud.ru, использует их LLM API.
+### Серверный режим (Cloud.ru)
 
 ```bash
 # .env
@@ -26,15 +24,11 @@ OPENAI_BASE_URL=https://foundation-models.api.cloud.ru/v1/
 OPENAI_MODEL=qwen3-235b
 ```
 
-Доступные модели Cloud.ru: `qwen3-235b`, `qwen3-coder`, `glm-4.5`, `gpt-oss-120b`
-
 ```bash
 docker-compose -f docker/docker-compose.yml up
 ```
 
-### 2. Локальный режим (VPN)
-
-Для разработки и тестирования. Работает через CLI с любым OpenAI-совместимым провайдером.
+### Локальный режим
 
 ```bash
 git clone https://github.com/mibrgmv/sdlc-agent.git
@@ -56,18 +50,51 @@ GITHUB_APP_INSTALLATION_ID=...
 
 OPENAI_API_KEY=<your-api-key>
 OPENAI_MODEL=gpt-4o-mini
-# OPENAI_BASE_URL= (не указывать для OpenAI)
 ```
+
+## CLI
+
+### solve
+
+Генерирует код по Issue и создаёт PR.
 
 ```bash
-python -m src.cli solve 1 --repo owner/repo
-python -m src.cli review 1 --repo owner/repo
+python -m src.cli solve <issue> --repo owner/repo [--auto] [--new]
 ```
 
-## Установка GitHub App
+| Флаг | Описание |
+|------|----------|
+| `--repo` | Репозиторий (owner/repo) — обязательный |
+| `--auto` | Полный цикл: solve → review → fix → ... до approve или MAX_ITERATIONS |
+| `--new` | Создать новый PR вместо обновления существующего |
 
-1. https://github.com/apps/megaschool-slave → Install
-2. Выбрать репозиторий
+### review
+
+Запускает code review для PR.
+
+```bash
+python -m src.cli review <pr> --repo owner/repo
+```
+
+| Флаг | Описание |
+|------|----------|
+| `--repo` | Репозиторий (owner/repo) — обязательный |
+
+## Code Review
+
+Reviewer классифицирует проблемы:
+
+| Тип | Блокирует | Описание |
+|-----|-----------|----------|
+| `error` | ✅ | Баги, уязвимости, runtime exceptions |
+| `requirement` | ✅ | Не соответствует требованиям Issue |
+| `refactor` | ❌ | SOLID/DRY нарушения, архитектура |
+| `style` | ❌ | Нейминг, форматирование |
+| `suggestion` | ❌ | Nice-to-have улучшения |
+
+**Approve:** нет blocking issues (`error`, `requirement`)
+
+Подробнее: [docs/REVIEW.md](docs/REVIEW.md)
 
 ## API
 
@@ -75,3 +102,8 @@ python -m src.cli review 1 --repo owner/repo
 |----------|-------|----------|
 | `/health` | GET | Health check |
 | `/webhook` | POST | GitHub webhook receiver |
+
+## GitHub App
+
+1. https://github.com/apps/megaschool-slave → Install
+2. Выбрать репозиторий

@@ -1,42 +1,46 @@
 import json
 import re
-
 from src.config import Settings
 from src.github_client import GitHubClient
 from src.llm_client import LLMClient
 
+BLOCKING_SEVERITIES = {"error", "requirement"}
+NON_BLOCKING_SEVERITIES = {"refactor", "style", "suggestion"}
 
-SYSTEM_PROMPT = """You are an expert code reviewer. Your task is to review pull request changes and verify they correctly implement the requirements from the linked issue.
+SYSTEM_PROMPT = """You are a pragmatic code reviewer. Focus on functionality over style.
 
-You will receive:
-1. The original issue requirements
-2. The PR diff (code changes)
-3. CI/CD check results (if available)
+Categorize issues by severity:
 
-You must respond with a JSON object containing:
+BLOCKING (use sparingly — only for real problems):
+- "error" — actual bugs, crashes, security vulnerabilities, code that won't run
+- "requirement" — core functionality missing (function doesn't exist, wrong return type, completely wrong behavior)
+
+NON-BLOCKING (suggestions):
+- "refactor" — code structure improvements
+- "style" — naming, formatting
+- "suggestion" — nice-to-have
+
+IMPORTANT RULES:
+1. If code implements the requested functionality and would work correctly — APPROVE
+2. "requirement" is ONLY for missing core functionality, NOT for style preferences like "LeetCode-style" or test format
+3. If tests exist and test the core functionality — that's sufficient, don't nitpick test style
+4. Prefer to approve with suggestions rather than block on minor issues
+
+Respond with JSON:
 {
-    "approved": true | false,
-    "summary": "Brief summary of your review",
+    "summary": "Brief summary",
     "issues": [
         {
-            "severity": "critical" | "major" | "minor" | "suggestion",
-            "description": "Description of the issue",
-            "file": "path/to/file (optional)",
-            "line": line_number (optional)
+            "severity": "error" | "requirement" | "refactor" | "style" | "suggestion",
+            "description": "Description",
+            "file": "path (optional)",
+            "line": number (optional)
         }
     ],
-    "meets_requirements": true | false,
-    "requirements_feedback": "Feedback on how well the PR meets the issue requirements"
+    "meets_requirements": true | false
 }
 
-Review criteria:
-1. Does the code correctly implement the issue requirements?
-2. Is the code clean and readable?
-3. Are there any bugs or logic errors?
-4. Are there any security concerns?
-5. Do CI checks pass?
-
-Be constructive and specific in your feedback. If there are no issues, approve the PR."""
+When in doubt, use NON-BLOCKING severity."""
 
 
 class ReviewerAgent:
@@ -45,7 +49,7 @@ class ReviewerAgent:
         self.github = GitHubClient(settings, repo)
         self.llm = LLMClient(settings)
 
-    def run(self, pr_number: int) -> dict:
+    def run(self, pr_number: int, iteration: int = 0) -> dict:
         pr = self.github.get_pull_request(pr_number)
 
         issue_number = self._extract_issue_number(pr.body or "")
@@ -56,6 +60,9 @@ class ReviewerAgent:
 
         diff = self.github.get_pr_diff(pr_number)
         check_runs = self.github.get_check_runs(pr_number)
+
+        ci_issues = self._check_ci_status(check_runs)
+        ci_passed = len(ci_issues) == 0
 
         ci_status = "No CI checks found"
         if check_runs:
@@ -76,7 +83,7 @@ Code Changes (Diff):
 CI/CD Status:
 {ci_status}
 
-Please review the changes and provide your assessment."""
+Review the changes. Remember: approve if core functionality works, don't block on style."""
 
         response = self.llm.chat(SYSTEM_PROMPT, user_prompt)
         review = self._parse_response(response)
@@ -84,22 +91,45 @@ Please review the changes and provide your assessment."""
         if not review:
             return {"success": False, "error": "Failed to parse review"}
 
-        self._post_review(pr_number, review)
+        issues = review.get("issues", [])
+        issues.extend(ci_issues)
+        review["issues"] = issues
+
+        blocking = [i for i in issues if i.get("severity") in BLOCKING_SEVERITIES]
+        non_blocking = [i for i in issues if i.get("severity") in NON_BLOCKING_SEVERITIES]
+
+        approved = len(blocking) == 0
+        review["approved"] = approved
+        review["blocking_count"] = len(blocking)
+        review["non_blocking_count"] = len(non_blocking)
+
+        self._post_review(pr_number, review, iteration, ci_passed)
 
         return {
             "success": True,
-            "approved": review.get("approved", False),
+            "approved": approved,
             "summary": review.get("summary", ""),
-            "issues_count": len(review.get("issues", [])),
+            "issues_count": len(issues),
+            "blocking_count": len(blocking),
+            "non_blocking_count": len(non_blocking),
         }
 
+    def _check_ci_status(self, check_runs: list[dict]) -> list[dict]:
+        ci_issues = []
+        for run in check_runs:
+            conclusion = run.get("conclusion")
+            if conclusion in ("failure", "timed_out", "cancelled"):
+                ci_issues.append({
+                    "severity": "error",
+                    "description": f"CI check '{run['name']}' failed: {conclusion}",
+                    "file": None,
+                    "line": None,
+                    "source": "ci",
+                })
+        return ci_issues
+
     def _extract_issue_number(self, body: str) -> int | None:
-        patterns = [
-            r"#(\d+)",
-            r"closes #(\d+)",
-            r"fixes #(\d+)",
-            r"resolves #(\d+)",
-        ]
+        patterns = [r"#(\d+)", r"closes #(\d+)", r"fixes #(\d+)", r"resolves #(\d+)"]
         for pattern in patterns:
             match = re.search(pattern, body.lower())
             if match:
@@ -116,33 +146,44 @@ Please review the changes and provide your assessment."""
             pass
         return {}
 
-    def _post_review(self, pr_number: int, review: dict) -> None:
+    def _post_review(self, pr_number: int, review: dict, iteration: int, ci_passed: bool) -> None:
         summary = review.get("summary", "Review completed")
         issues = review.get("issues", [])
         approved = review.get("approved", False)
         meets_requirements = review.get("meets_requirements", False)
 
-        body_parts = ["## AI Code Review\n"]
+        blocking = [i for i in issues if i.get("severity") in BLOCKING_SEVERITIES]
+        non_blocking = [i for i in issues if i.get("severity") in NON_BLOCKING_SEVERITIES]
+
+        body_parts = [f"## AI Code Review (Iteration {iteration})\n"] if iteration else ["## AI Code Review\n"]
         body_parts.append(f"**Status:** {'✅ Approved' if approved else '❌ Changes Requested'}\n")
         body_parts.append(f"**Requirements Met:** {'✅ Yes' if meets_requirements else '❌ No'}\n")
+        body_parts.append(f"**CI Status:** {'✅ Passed' if ci_passed else '❌ Failed'}\n")
         body_parts.append(f"\n### Summary\n{summary}\n")
 
-        if review.get("requirements_feedback"):
-            body_parts.append(f"\n### Requirements Analysis\n{review['requirements_feedback']}\n")
-
-        if issues:
-            body_parts.append("\n### Issues Found\n")
-            for issue in issues:
-                severity = issue.get("severity", "minor").upper()
+        if blocking:
+            body_parts.append("\n### 🚫 Blocking Issues (must fix)\n")
+            for issue in blocking:
+                severity = issue.get("severity", "error").upper()
                 desc = issue.get("description", "")
-                file_info = ""
-                if issue.get("file"):
-                    file_info = f" (`{issue['file']}"
-                    if issue.get("line"):
-                        file_info += f":{issue['line']}"
-                    file_info += "`)"
+                file_info = self._format_file_info(issue)
+                source = " [CI]" if issue.get("source") == "ci" else ""
+                body_parts.append(f"- **[{severity}]{source}** {desc}{file_info}\n")
+
+        if non_blocking:
+            body_parts.append("\n### 💡 Suggestions (non-blocking)\n")
+            for issue in non_blocking:
+                severity = issue.get("severity", "suggestion").upper()
+                desc = issue.get("description", "")
+                file_info = self._format_file_info(issue)
                 body_parts.append(f"- **[{severity}]** {desc}{file_info}\n")
 
-        body = "".join(body_parts)
+        self.github.add_pr_comment(pr_number, "".join(body_parts))
 
-        self.github.add_pr_comment(pr_number, body)
+    def _format_file_info(self, issue: dict) -> str:
+        if not issue.get("file"):
+            return ""
+        file_info = f" (`{issue['file']}"
+        if issue.get("line"):
+            file_info += f":{issue['line']}"
+        return file_info + "`)"
