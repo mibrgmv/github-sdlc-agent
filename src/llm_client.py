@@ -1,5 +1,4 @@
 from openai import OpenAI
-
 from src.config import Settings
 
 

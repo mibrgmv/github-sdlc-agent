@@ -1,21 +1,14 @@
 import hashlib
 import hmac
 import logging
-import re
-import time
 from contextlib import asynccontextmanager
-
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
-
-from src.agents.code_agent import CodeAgent
-from src.agents.reviewer_agent import ReviewerAgent
 from src.config import get_settings
 from src.github_client import GitHubClient
+from src.runner import run_cycle, run_review, get_iteration_count, extract_issue_number
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-ITERATION_MARKER = "[SDLC-ITERATION:"
 
 
 @asynccontextmanager
@@ -31,40 +24,15 @@ app = FastAPI(title="SDLC Agent", lifespan=lifespan)
 def verify_signature(payload: bytes, signature: str, secret: str) -> bool:
     if not signature or not secret:
         return not secret
-
-    expected = "sha256=" + hmac.new(
-        secret.encode(), payload, hashlib.sha256
-    ).hexdigest()
+    expected = "sha256=" + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature)
-
-
-def get_iteration_count(github: GitHubClient, pr_number: int) -> int:
-    comments = github.get_pr_comments(pr_number)
-    for comment in reversed(comments):
-        body = comment.get("body", "")
-        if ITERATION_MARKER in body:
-            match = re.search(r"\[SDLC-ITERATION:(\d+)\]", body)
-            if match:
-                return int(match.group(1))
-    return 0
-
-
-def extract_issue_number(body: str) -> int | None:
-    patterns = [r"#(\d+)", r"closes #(\d+)", r"fixes #(\d+)", r"resolves #(\d+)"]
-    for pattern in patterns:
-        match = re.search(pattern, body.lower())
-        if match:
-            return int(match.group(1))
-    return None
 
 
 def process_issue(issue_number: int, repo: str):
     logger.info(f"Processing issue #{issue_number} in {repo}")
     try:
         settings = get_settings()
-        settings.target_repo = repo
-        agent = CodeAgent(settings)
-        result = agent.run(issue_number)
+        result = run_cycle(settings, repo, issue_number)
         logger.info(f"Issue #{issue_number} result: {result}")
     except Exception as e:
         logger.error(f"Error processing issue #{issue_number}: {e}")
@@ -74,38 +42,22 @@ def process_pr_review(pr_number: int, repo: str):
     logger.info(f"Reviewing PR #{pr_number} in {repo}")
     try:
         settings = get_settings()
-        settings.target_repo = repo
-
-        github = GitHubClient(settings)
+        github = GitHubClient(settings, repo)
         pr = github.get_pull_request(pr_number)
 
-        iteration = get_iteration_count(github, pr_number) + 1
-        logger.info(f"PR #{pr_number} iteration: {iteration}/{settings.max_iterations}")
-
-        if iteration > settings.max_iterations:
-            logger.warning(f"PR #{pr_number} reached max iterations ({settings.max_iterations}), stopping")
-            github.add_pr_comment(
-                pr_number,
-                f"⚠️ **Max iterations reached ({settings.max_iterations})**. Stopping automatic fixes."
-            )
+        iteration = get_iteration_count(github, pr_number)
+        if iteration >= settings.max_iterations:
+            logger.warning(f"PR #{pr_number} reached max iterations ({settings.max_iterations}), skipping")
             return
 
-        agent = ReviewerAgent(settings)
-        result = agent.run(pr_number)
+        result = run_review(settings, repo, pr_number)
         logger.info(f"PR #{pr_number} review result: {result}")
-
-        github.add_pr_comment(pr_number, f"<!-- {ITERATION_MARKER}{iteration}] -->")
 
         if result.get("success") and not result.get("approved", False):
             issue_number = extract_issue_number(pr.body or "")
             if issue_number and result.get("issues_count", 0) > 0:
-                logger.info(f"PR #{pr_number} not approved, triggering fix cycle for issue #{issue_number}")
-                time.sleep(2)
+                logger.info(f"PR #{pr_number} not approved, triggering fix for issue #{issue_number}")
                 process_issue(issue_number, repo)
-            else:
-                logger.info(f"PR #{pr_number} not approved but no linked issue found or no issues to fix")
-        elif result.get("approved"):
-            logger.info(f"PR #{pr_number} approved!")
 
     except Exception as e:
         logger.error(f"Error reviewing PR #{pr_number}: {e}")

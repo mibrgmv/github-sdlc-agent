@@ -34,13 +34,13 @@ python -m src.cli review <pr_number> --repo owner/repo
 - `src/agents/code_agent.py` — clones repo, generates changes via LLM, creates PR
 - `src/agents/reviewer_agent.py` — analyzes PR diff, posts review
 - `src/github_client.py` — PyGithub wrapper with GitHub App support
-- `src/llm_client.py` — OpenAI-compatible API client (Groq)
+- `src/llm_client.py` — LLM client (OpenAI-compatible API)
 - `src/config.py` — settings from env vars
 - `.github/workflows/` — alternative triggers via GitHub Actions
 
 ## Environment Variables
 
 Required:
-- `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_BASE_URL`
 - `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_APP_INSTALLATION_ID`
 - `GITHUB_WEBHOOK_SECRET` (for webhook server)
+- `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_BASE_URL`
