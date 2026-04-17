@@ -14,7 +14,8 @@ from src.models import CodeChangesResponse
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are an expert software developer. Your task is to implement code changes based on GitHub issue requirements.
+SYSTEM_PROMPT = """You are an expert software developer.
+Your task is to implement code changes based on GitHub issue requirements.
 
 You will receive:
 1. Issue title and description

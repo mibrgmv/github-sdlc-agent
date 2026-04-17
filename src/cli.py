@@ -1,7 +1,9 @@
 import sys
+
 import click
+
 from src.config import get_settings
-from src.runner import run_solve, run_review, run_cycle
+from src.runner import run_cycle, run_review, run_solve
 
 
 def validate_settings(settings):

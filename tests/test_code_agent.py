@@ -1,7 +1,5 @@
 from unittest.mock import MagicMock
 
-import pytest
-
 from src.agents.code_agent import CodeAgent
 from src.models import CodeChangesResponse
 
@@ -76,7 +74,11 @@ def test_parse_response_invalid_action():
 
 def test_parse_response_json_in_text():
     agent = make_agent()
-    wrapped = 'Sure! Here are the changes:\n{"analysis": "x", "changes": [{"path": "f.py", "action": "create", "content": ""}], "commit_message": "c", "pr_title": "t", "pr_body": "b"}'
+    wrapped = (
+        'Sure! Here are the changes:\n'
+        '{"analysis": "x", "changes": [{"path": "f.py", "action": "create", "content": ""}], '
+        '"commit_message": "c", "pr_title": "t", "pr_body": "b"}'
+    )
     result = agent._parse_response(wrapped)
     assert result is not None
 

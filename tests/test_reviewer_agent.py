@@ -1,7 +1,5 @@
 from unittest.mock import MagicMock
 
-import pytest
-
 from src.agents.reviewer_agent import ReviewerAgent
 from src.models import ReviewIssue, ReviewResponse
 

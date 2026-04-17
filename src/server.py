@@ -2,10 +2,12 @@ import hashlib
 import hmac
 import logging
 from contextlib import asynccontextmanager
+
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
+
 from src.config import get_settings
 from src.github_client import GitHubClient
-from src.runner import run_cycle, run_review, get_iteration_count, extract_issue_number
+from src.runner import extract_issue_number, get_iteration_count, run_cycle, run_review
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
