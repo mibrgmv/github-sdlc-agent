@@ -14,9 +14,7 @@ class Settings(BaseSettings):
     max_iterations: int = 5
     target_repo: str = ""
 
-    class Config:
-        env_file = ".env"
-        extra = "ignore"
+    model_config = {"env_file": ".env", "extra": "ignore"}
 
     def use_github_app(self) -> bool:
         return bool(self.github_app_id and self.github_app_private_key)

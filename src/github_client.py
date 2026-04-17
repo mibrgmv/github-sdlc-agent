@@ -1,9 +1,30 @@
+import logging
+import time
+
 from github import Auth, Github, GithubException, GithubIntegration
 from github.Issue import Issue
 from github.PullRequest import PullRequest
 from github.Repository import Repository
 
 from src.config import Settings
+
+logger = logging.getLogger(__name__)
+
+_RETRY_DELAYS = [2, 4, 8]
+
+
+def _retry_on_5xx(func):
+    def wrapper(*args, **kwargs):
+        for attempt in range(len(_RETRY_DELAYS) + 1):
+            try:
+                return func(*args, **kwargs)
+            except GithubException as e:
+                if attempt == len(_RETRY_DELAYS) or e.status < 500:
+                    raise
+                delay = _RETRY_DELAYS[attempt]
+                logger.warning("GitHub API error %d, retry %d in %ds", e.status, attempt + 1, delay)
+                time.sleep(delay)
+    return wrapper
 
 
 class GitHubClient:
@@ -56,6 +77,7 @@ class GitHubClient:
     def get_pull_request(self, pr_number: int) -> PullRequest:
         return self.repo.get_pull(pr_number)
 
+    @_retry_on_5xx
     def create_pull_request(
         self, title: str, body: str, head: str, base: str = "main"
     ) -> PullRequest:
@@ -87,10 +109,12 @@ class GitHubClient:
             })
         return comments
 
+    @_retry_on_5xx
     def add_pr_comment(self, pr_number: int, body: str) -> None:
         pr = self.get_pull_request(pr_number)
         pr.create_issue_comment(body)
 
+    @_retry_on_5xx
     def create_pr_review(
         self, pr_number: int, body: str, event: str = "COMMENT"
     ) -> None:

@@ -1,10 +1,15 @@
 import json
+import logging
 import re
+
+from pydantic import ValidationError
 
 from src.config import Settings
 from src.github_client import GitHubClient
 from src.llm_client import LLMClient
+from src.models import ReviewResponse
 
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are an expert code reviewer. Your task is to review pull request changes and verify they correctly implement the requirements from the linked issue.
 
@@ -88,17 +93,17 @@ Please review the changes and provide your assessment."""
 
         return {
             "success": True,
-            "approved": review.get("approved", False),
-            "summary": review.get("summary", ""),
-            "issues_count": len(review.get("issues", [])),
+            "approved": review.approved,
+            "summary": review.summary,
+            "issues_count": len(review.issues),
         }
 
     def _extract_issue_number(self, body: str) -> int | None:
         patterns = [
-            r"#(\d+)",
             r"closes #(\d+)",
             r"fixes #(\d+)",
             r"resolves #(\d+)",
+            r"#(\d+)",
         ]
         for pattern in patterns:
             match = re.search(pattern, body.lower())
@@ -106,43 +111,40 @@ Please review the changes and provide your assessment."""
                 return int(match.group(1))
         return None
 
-    def _parse_response(self, response: str) -> dict:
+    def _parse_response(self, response: str) -> ReviewResponse | None:
         try:
             start = response.find("{")
             end = response.rfind("}") + 1
             if start != -1 and end > start:
-                return json.loads(response[start:end])
-        except json.JSONDecodeError:
-            pass
-        return {}
+                data = json.loads(response[start:end])
+                return ReviewResponse.model_validate(data)
+        except (json.JSONDecodeError, ValidationError) as e:
+            logger.error("Failed to parse review response: %s", e)
+        return None
 
-    def _post_review(self, pr_number: int, review: dict) -> None:
-        summary = review.get("summary", "Review completed")
-        issues = review.get("issues", [])
-        approved = review.get("approved", False)
-        meets_requirements = review.get("meets_requirements", False)
+    def _format_body(self, review: ReviewResponse) -> str:
+        parts = ["## AI Code Review\n"]
+        parts.append(f"**Status:** {'✅ Approved' if review.approved else '❌ Changes Requested'}\n")
+        parts.append(f"**Requirements Met:** {'✅ Yes' if review.meets_requirements else '❌ No'}\n")
+        parts.append(f"\n### Summary\n{review.summary}\n")
 
-        body_parts = ["## AI Code Review\n"]
-        body_parts.append(f"**Status:** {'✅ Approved' if approved else '❌ Changes Requested'}\n")
-        body_parts.append(f"**Requirements Met:** {'✅ Yes' if meets_requirements else '❌ No'}\n")
-        body_parts.append(f"\n### Summary\n{summary}\n")
+        if review.requirements_feedback:
+            parts.append(f"\n### Requirements Analysis\n{review.requirements_feedback}\n")
 
-        if review.get("requirements_feedback"):
-            body_parts.append(f"\n### Requirements Analysis\n{review['requirements_feedback']}\n")
-
-        if issues:
-            body_parts.append("\n### Issues Found\n")
-            for issue in issues:
-                severity = issue.get("severity", "minor").upper()
-                desc = issue.get("description", "")
+        if review.issues:
+            parts.append("\n### Issues Found\n")
+            for issue in review.issues:
                 file_info = ""
-                if issue.get("file"):
-                    file_info = f" (`{issue['file']}"
-                    if issue.get("line"):
-                        file_info += f":{issue['line']}"
+                if issue.file:
+                    file_info = f" (`{issue.file}"
+                    if issue.line:
+                        file_info += f":{issue.line}"
                     file_info += "`)"
-                body_parts.append(f"- **[{severity}]** {desc}{file_info}\n")
+                parts.append(f"- **[{issue.severity.upper()}]** {issue.description}{file_info}\n")
 
-        body = "".join(body_parts)
+        return "".join(parts)
 
-        self.github.add_pr_comment(pr_number, body)
+    def _post_review(self, pr_number: int, review: ReviewResponse) -> None:
+        event = "APPROVE" if review.approved else "REQUEST_CHANGES"
+        body = self._format_body(review)
+        self.github.create_pr_review(pr_number, body=body, event=event)
