@@ -41,30 +41,27 @@ def test_extract_issue_number_none():
 def test_parse_response_valid():
     agent = make_agent()
     json_str = """{
-        "approved": true,
         "summary": "LGTM",
         "issues": [],
-        "meets_requirements": true,
-        "requirements_feedback": "All good"
+        "meets_requirements": true
     }"""
     result = agent._parse_response(json_str)
     assert result is not None
-    assert result.approved is True
     assert result.summary == "LGTM"
+    assert result.approved is False  # default
 
 
 def test_parse_response_with_issues():
     agent = make_agent()
     json_str = """{
-        "approved": false,
         "summary": "Has issues",
-        "issues": [{"severity": "major", "description": "Bug", "file": "src/app.py", "line": 10}],
+        "issues": [{"severity": "error", "description": "NPE", "file": "src/app.py", "line": 10}],
         "meets_requirements": false
     }"""
     result = agent._parse_response(json_str)
     assert result is not None
     assert len(result.issues) == 1
-    assert result.issues[0].severity == "major"
+    assert result.issues[0].severity == "error"
 
 
 def test_parse_response_invalid_json():
@@ -73,35 +70,54 @@ def test_parse_response_invalid_json():
 
 def test_parse_response_json_wrapped_in_text():
     agent = make_agent()
-    response = 'Here is my review:\n{"approved": true, "summary": "ok", "meets_requirements": true}\nDone.'
+    response = 'Here is my review:\n{"summary": "ok", "meets_requirements": true}\nDone.'
     result = agent._parse_response(response)
     assert result is not None
-    assert result.approved is True
+    assert result.summary == "ok"
 
 
 def test_parse_response_invalid_schema():
-    assert make_agent()._parse_response('{"approved": true}') is None
+    assert make_agent()._parse_response('{"summary": "ok"}') is None
 
 
 def test_parse_response_invalid_severity():
     agent = make_agent()
     json_str = """{
-        "approved": false,
         "summary": "Issues",
-        "issues": [{"severity": "blocker", "description": "Bad"}],
+        "issues": [{"severity": "critical", "description": "Bad"}],
         "meets_requirements": false
     }"""
     assert agent._parse_response(json_str) is None
+
+
+# --- _check_ci_status ---
+
+def test_check_ci_status_passed():
+    agent = make_agent()
+    runs = [{"name": "tests", "conclusion": "success", "status": "completed"}]
+    assert agent._check_ci_status(runs) == []
+
+
+def test_check_ci_status_failed():
+    agent = make_agent()
+    runs = [{"name": "tests", "conclusion": "failure", "status": "completed"}]
+    result = agent._check_ci_status(runs)
+    assert len(result) == 1
+    assert result[0]["severity"] == "error"
+    assert result[0]["source"] == "ci"
+
+
+def test_check_ci_status_empty():
+    assert make_agent()._check_ci_status([]) == []
 
 
 # --- _post_review ---
 
 def test_post_review_approve():
     agent = make_agent()
-    review = ReviewResponse(
-        approved=True, summary="All good", issues=[], meets_requirements=True
-    )
-    agent._post_review(1, review)
+    review = ReviewResponse(summary="All good", issues=[], meets_requirements=True)
+    review.approved = True
+    agent._post_review(1, review, 0, True)
     agent.github.create_pr_review.assert_called_once()
     _, kwargs = agent.github.create_pr_review.call_args
     assert kwargs["event"] == "APPROVE"
@@ -110,35 +126,49 @@ def test_post_review_approve():
 def test_post_review_request_changes():
     agent = make_agent()
     review = ReviewResponse(
-        approved=False,
         summary="Needs work",
-        issues=[ReviewIssue(severity="major", description="Bug found")],
+        issues=[ReviewIssue(severity="error", description="Bug")],
         meets_requirements=False,
     )
-    agent._post_review(1, review)
+    review.approved = False
+    agent._post_review(1, review, 1, False)
     _, kwargs = agent.github.create_pr_review.call_args
     assert kwargs["event"] == "REQUEST_CHANGES"
 
 
 def test_post_review_body_contains_summary():
     agent = make_agent()
-    review = ReviewResponse(
-        approved=True, summary="Everything looks great", issues=[], meets_requirements=True
-    )
-    agent._post_review(5, review)
+    review = ReviewResponse(summary="Everything looks great", issues=[], meets_requirements=True)
+    review.approved = True
+    agent._post_review(5, review, 0, True)
     _, kwargs = agent.github.create_pr_review.call_args
     assert "Everything looks great" in kwargs["body"]
 
 
-def test_post_review_body_contains_issues():
+def test_post_review_body_has_blocking_section():
     agent = make_agent()
     review = ReviewResponse(
-        approved=False,
-        summary="Problems found",
-        issues=[ReviewIssue(severity="critical", description="Memory leak", file="src/server.py", line=42)],
+        summary="Problems",
+        issues=[ReviewIssue(severity="requirement", description="Missing function", file="src/app.py")],
         meets_requirements=False,
     )
-    agent._post_review(3, review)
+    review.approved = False
+    agent._post_review(3, review, 2, True)
     _, kwargs = agent.github.create_pr_review.call_args
-    assert "Memory leak" in kwargs["body"]
-    assert "src/server.py" in kwargs["body"]
+    assert "Blocking Issues" in kwargs["body"]
+    assert "Missing function" in kwargs["body"]
+    assert "Iteration 2" in kwargs["body"]
+
+
+def test_post_review_body_has_suggestions_section():
+    agent = make_agent()
+    review = ReviewResponse(
+        summary="Minor suggestions",
+        issues=[ReviewIssue(severity="style", description="Rename variable")],
+        meets_requirements=True,
+    )
+    review.approved = True
+    agent._post_review(3, review, 0, True)
+    _, kwargs = agent.github.create_pr_review.call_args
+    assert "Suggestions" in kwargs["body"]
+    assert "Rename variable" in kwargs["body"]

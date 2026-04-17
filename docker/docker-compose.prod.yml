@@ -1,14 +1,12 @@
 services:
   server:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
+    image: ghcr.io/mibrgmv/sdlc-agent:latest
     container_name: sdlc-server
     env_file:
-      - ../.env.docker
+      - .env
     ports:
       - "8000:8000"
     volumes:
-      - ../megaschool-slave.2026-01-29.private-key.pem:/app/private-key.pem:ro
+      - ./private-key.pem:/app/private-key.pem:ro
     command: [ "python", "-m", "uvicorn", "src.server:app", "--host", "0.0.0.0", "--port", "8000" ]
     restart: unless-stopped

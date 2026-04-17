@@ -2,20 +2,23 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+BLOCKING_SEVERITIES = {"error", "requirement"}
+NON_BLOCKING_SEVERITIES = {"refactor", "style", "suggestion"}
+
 
 class ReviewIssue(BaseModel):
-    severity: Literal["critical", "major", "minor", "suggestion"]
+    severity: Literal["error", "requirement", "refactor", "style", "suggestion"]
     description: str
     file: str | None = None
     line: int | None = None
+    source: str | None = None  # "ci" for CI-generated issues
 
 
 class ReviewResponse(BaseModel):
-    approved: bool
     summary: str
     issues: list[ReviewIssue] = []
     meets_requirements: bool
-    requirements_feedback: str = ""
+    approved: bool = False  # computed after parsing, not from LLM
 
 
 class FileChange(BaseModel):

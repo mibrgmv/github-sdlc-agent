@@ -86,14 +86,22 @@ def test_parse_response_json_in_text():
 def test_get_relevant_files_keyword_match():
     agent = make_agent()
     files = ["src/auth.py", "src/server.py", "README.md", "config.yml"]
-    result = agent._get_relevant_files("fix auth bug", "authentication issue", files)
+    result = agent._get_relevant_files("fix auth bug", "authentication issue", files, [])
     assert "src/auth.py" in result
+
+
+def test_get_relevant_files_from_blocking_issues():
+    agent = make_agent()
+    files = ["src/auth.py", "src/server.py"]
+    blocking = [{"severity": "error", "description": "Bug", "file": "src/server.py", "line": 5}]
+    result = agent._get_relevant_files("some task", "desc", files, blocking)
+    assert "src/server.py" in result
 
 
 def test_get_relevant_files_includes_code_files():
     agent = make_agent()
     files = ["src/unrelated.py", "data/dump.sql", "notes.txt"]
-    result = agent._get_relevant_files("some task", "description", files)
+    result = agent._get_relevant_files("some task", "description", files, [])
     assert "src/unrelated.py" in result
     assert "data/dump.sql" not in result
 
@@ -101,11 +109,35 @@ def test_get_relevant_files_includes_code_files():
 def test_get_relevant_files_limit():
     agent = make_agent()
     files = [f"src/file{i}.py" for i in range(50)]
-    result = agent._get_relevant_files("something", "description", files)
+    result = agent._get_relevant_files("something", "description", files, [])
     assert len(result) <= 20
 
 
 def test_get_relevant_files_empty():
     agent = make_agent()
-    result = agent._get_relevant_files("task", "desc", [])
-    assert result == []
+    assert agent._get_relevant_files("task", "desc", [], []) == []
+
+
+# --- _parse_issue_line ---
+
+def test_parse_issue_line_with_file():
+    agent = make_agent()
+    line = "- **[ERROR]** Null pointer exception (`src/app.py:42`)"
+    result = agent._parse_issue_line(line)
+    assert result is not None
+    assert result["severity"] == "ERROR"
+    assert result["file"] == "src/app.py"
+    assert result["line"] == 42
+
+
+def test_parse_issue_line_ci_tag():
+    agent = make_agent()
+    line = "- **[ERROR] [CI]** Tests failed: failure"
+    result = agent._parse_issue_line(line)
+    assert result is not None
+    assert result["severity"] == "ERROR"
+
+
+def test_parse_issue_line_no_match():
+    agent = make_agent()
+    assert agent._parse_issue_line("some random line") is None

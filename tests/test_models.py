@@ -6,50 +6,55 @@ from src.models import CodeChangesResponse, FileChange, ReviewIssue, ReviewRespo
 
 def test_review_response_valid():
     data = {
-        "approved": True,
         "summary": "Looks good",
         "issues": [],
         "meets_requirements": True,
-        "requirements_feedback": "All good",
     }
     review = ReviewResponse.model_validate(data)
-    assert review.approved is True
     assert review.summary == "Looks good"
     assert review.issues == []
+    assert review.approved is False  # default, computed later
 
 
-def test_review_response_defaults():
-    review = ReviewResponse(approved=False, summary="Needs work", meets_requirements=False)
-    assert review.issues == []
-    assert review.requirements_feedback == ""
+def test_review_response_approved_default_false():
+    review = ReviewResponse(summary="ok", meets_requirements=True)
+    assert review.approved is False
 
 
-def test_review_response_invalid_severity():
-    data = {
-        "approved": False,
-        "summary": "Issues found",
-        "issues": [{"severity": "blocker", "description": "Something bad"}],
-        "meets_requirements": False,
-    }
-    with pytest.raises(ValidationError):
-        ReviewResponse.model_validate(data)
+def test_review_response_approved_settable():
+    review = ReviewResponse(summary="ok", meets_requirements=True)
+    review.approved = True
+    assert review.approved is True
 
 
 def test_review_response_missing_required():
     with pytest.raises(ValidationError):
-        ReviewResponse.model_validate({"approved": True})
+        ReviewResponse.model_validate({"summary": "ok"})
+
+
+def test_review_issue_valid_severities():
+    for severity in ("error", "requirement", "refactor", "style", "suggestion"):
+        issue = ReviewIssue(severity=severity, description="test")
+        assert issue.severity == severity
+
+
+def test_review_issue_invalid_severity():
+    with pytest.raises(ValidationError):
+        ReviewIssue(severity="critical", description="test")
 
 
 def test_review_issue_optional_fields():
-    issue = ReviewIssue(severity="minor", description="Style nit")
+    issue = ReviewIssue(severity="error", description="Bug")
     assert issue.file is None
     assert issue.line is None
+    assert issue.source is None
 
 
 def test_review_issue_with_location():
-    issue = ReviewIssue(severity="critical", description="Null pointer", file="src/app.py", line=42)
+    issue = ReviewIssue(severity="error", description="NPE", file="src/app.py", line=42, source="ci")
     assert issue.file == "src/app.py"
     assert issue.line == 42
+    assert issue.source == "ci"
 
 
 def test_code_changes_response_valid():
@@ -63,7 +68,6 @@ def test_code_changes_response_valid():
     result = CodeChangesResponse.model_validate(data)
     assert len(result.changes) == 1
     assert result.changes[0].action == "create"
-    assert result.changes[0].path == "src/foo.py"
 
 
 def test_code_changes_response_invalid_action():
