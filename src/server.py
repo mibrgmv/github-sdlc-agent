@@ -2,10 +2,12 @@ import hashlib
 import hmac
 import logging
 from contextlib import asynccontextmanager
+
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
+
 from src.config import get_settings
 from src.github_client import GitHubClient
-from src.runner import run_cycle, run_review, get_iteration_count, extract_issue_number
+from src.runner import extract_issue_number, get_iteration_count, run_cycle, run_describe, run_review, run_test_gen
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -36,6 +38,30 @@ def process_issue(issue_number: int, repo: str):
         logger.info(f"Issue #{issue_number} result: {result}")
     except Exception as e:
         logger.error(f"Error processing issue #{issue_number}: {e}")
+
+
+def process_pr_describe(pr_number: int, repo: str):
+    logger.info(f"Describing PR #{pr_number} in {repo}")
+    try:
+        settings = get_settings()
+        if "pr_desc" not in settings.enabled_agents_set:
+            return
+        result = run_describe(settings, repo, pr_number)
+        logger.info(f"PR #{pr_number} describe result: {result}")
+    except Exception as e:
+        logger.error(f"Error describing PR #{pr_number}: {e}")
+
+
+def process_pr_test_gen(pr_number: int, repo: str):
+    logger.info(f"Generating tests for PR #{pr_number} in {repo}")
+    try:
+        settings = get_settings()
+        if "test_gen" not in settings.enabled_agents_set:
+            return
+        result = run_test_gen(settings, repo, pr_number)
+        logger.info(f"PR #{pr_number} test_gen result: {result}")
+    except Exception as e:
+        logger.error(f"Error generating tests for PR #{pr_number}: {e}")
 
 
 def process_pr_review(pr_number: int, repo: str):
@@ -97,11 +123,20 @@ async def webhook(
 
     elif x_github_event == "pull_request":
         action = data.get("action")
-        if action in ("opened", "synchronize"):
-            pr_number = data.get("pull_request", {}).get("number")
-            if pr_number:
-                background_tasks.add_task(process_pr_review, pr_number, repo)
-                return {"status": "processing", "event": "pull_request", "number": pr_number}
+        pr_number = data.get("pull_request", {}).get("number")
+
+        if not pr_number:
+            return {"status": "ignored", "reason": "no pr number"}
+
+        if action == "opened":
+            background_tasks.add_task(process_pr_describe, pr_number, repo)
+            background_tasks.add_task(process_pr_test_gen, pr_number, repo)
+            background_tasks.add_task(process_pr_review, pr_number, repo)
+            return {"status": "processing", "event": "pull_request.opened", "number": pr_number}
+
+        if action == "synchronize":
+            background_tasks.add_task(process_pr_review, pr_number, repo)
+            return {"status": "processing", "event": "pull_request.synchronize", "number": pr_number}
 
     return {"status": "ignored", "event": x_github_event}
 

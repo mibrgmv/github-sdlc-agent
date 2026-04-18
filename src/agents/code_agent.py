@@ -1,13 +1,19 @@
 import json
+import logging
 import re
 import tempfile
 from pathlib import Path
-from git import Repo
-from src.config import Settings
-from src.github_client import GitHubClient
-from src.llm_client import LLMClient
 
-SYSTEM_PROMPT = """You are an expert software developer. Your task is to implement code changes based on GitHub issue requirements.
+from git import Repo
+from pydantic import ValidationError
+
+from src.agents.base import Agent
+from src.models import CodeChangesResponse
+
+logger = logging.getLogger(__name__)
+
+SYSTEM_PROMPT = """You are an expert software developer.
+Your task is to implement code changes based on GitHub issue requirements.
 
 You will receive:
 1. Issue title and description
@@ -38,12 +44,7 @@ Guidelines:
 - Ensure code is functional and complete"""
 
 
-class CodeAgent:
-    def __init__(self, settings: Settings, repo: str):
-        self.settings = settings
-        self.github = GitHubClient(settings, repo)
-        self.llm = LLMClient(settings)
-
+class CodeAgent(Agent):
     def run(self, issue_number: int, force_new: bool = False) -> dict:
         issue = self.github.get_issue(issue_number)
 
@@ -99,7 +100,7 @@ Please analyze the issue and provide the necessary code changes."""
         response = self.llm.chat(SYSTEM_PROMPT, user_prompt)
         changes = self._parse_response(response)
 
-        if not changes or not changes.get("changes"):
+        if not changes or not changes.changes:
             return {"success": False, "error": "Failed to generate changes"}
 
         result = self._apply_changes(changes, issue_number, branch_name, existing_prs)
@@ -156,14 +157,11 @@ Please analyze the issue and provide the necessary code changes."""
             else:
                 file = file_info
 
-        return {
-            "severity": severity,
-            "description": rest,
-            "file": file,
-            "line": line_num,
-        }
+        return {"severity": severity, "description": rest, "file": file, "line": line_num}
 
-    def _get_relevant_files(self, title: str, body: str, all_files: list[str], blocking_issues: list[dict]) -> list[str]:
+    def _get_relevant_files(
+        self, title: str, body: str, all_files: list[str], blocking_issues: list[dict]
+    ) -> list[str]:
         relevant = set()
 
         for issue in blocking_issues:
@@ -180,17 +178,24 @@ Please analyze the issue and provide the necessary code changes."""
 
         return list(relevant)[:20]
 
-    def _parse_response(self, response: str) -> dict:
+    def _parse_response(self, response: str) -> CodeChangesResponse | None:
         try:
             start = response.find("{")
             end = response.rfind("}") + 1
             if start != -1 and end > start:
-                return json.loads(response[start:end])
-        except json.JSONDecodeError:
-            pass
-        return {}
+                data = json.loads(response[start:end])
+                return CodeChangesResponse.model_validate(data)
+        except (json.JSONDecodeError, ValidationError) as e:
+            logger.error("Failed to parse code response: %s", e)
+        return None
 
-    def _apply_changes(self, changes: dict, issue_number: int, branch_name: str, existing_prs: list) -> dict:
+    def _apply_changes(
+        self,
+        changes: CodeChangesResponse,
+        issue_number: int,
+        branch_name: str,
+        existing_prs: list,
+    ) -> dict:
         with tempfile.TemporaryDirectory() as tmpdir:
             token = self.github.get_installation_token()
             repo_url = f"https://x-access-token:{token}@github.com/{self.github.repo.full_name}.git"
@@ -203,22 +208,22 @@ Please analyze the issue and provide the necessary code changes."""
             except Exception:
                 repo.git.checkout("-b", branch_name)
 
-            for change in changes.get("changes", []):
-                file_path = Path(tmpdir) / change["path"]
+            for change in changes.changes:
+                file_path = Path(tmpdir) / change.path
 
-                if change["action"] == "delete":
+                if change.action == "delete":
                     if file_path.exists():
                         file_path.unlink()
-                        repo.index.remove([change["path"]])
+                        repo.index.remove([change.path])
                 else:
                     file_path.parent.mkdir(parents=True, exist_ok=True)
-                    file_path.write_text(change["content"])
-                    repo.index.add([change["path"]])
+                    file_path.write_text(change.content)
+                    repo.index.add([change.path])
 
             if not repo.index.diff("HEAD") and not repo.untracked_files:
                 return {"success": False, "error": "No changes to commit"}
 
-            repo.index.commit(changes.get("commit_message", f"Fix issue #{issue_number}"))
+            repo.index.commit(changes.commit_message or f"Fix issue #{issue_number}")
             repo.remote("origin").push(branch_name, force=True)
 
         if existing_prs:
@@ -231,8 +236,8 @@ Please analyze the issue and provide the necessary code changes."""
             }
 
         pr = self.github.create_pull_request(
-            title=changes.get("pr_title", f"Fix issue #{issue_number}"),
-            body=changes.get("pr_body", f"Closes #{issue_number}") + f"\n\nCloses #{issue_number}",
+            title=changes.pr_title or f"Fix issue #{issue_number}",
+            body=changes.pr_body + f"\n\nCloses #{issue_number}",
             head=branch_name,
             base=default_branch,
         )

@@ -1,11 +1,13 @@
 import json
+import logging
 import re
-from src.config import Settings
-from src.github_client import GitHubClient
-from src.llm_client import LLMClient
 
-BLOCKING_SEVERITIES = {"error", "requirement"}
-NON_BLOCKING_SEVERITIES = {"refactor", "style", "suggestion"}
+from pydantic import ValidationError
+
+from src.agents.base import Agent
+from src.models import BLOCKING_SEVERITIES, NON_BLOCKING_SEVERITIES, ReviewIssue, ReviewResponse
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are a pragmatic code reviewer. Focus on functionality over style.
 
@@ -22,7 +24,7 @@ NON-BLOCKING (suggestions):
 
 IMPORTANT RULES:
 1. If code implements the requested functionality and would work correctly — APPROVE
-2. "requirement" is ONLY for missing core functionality, NOT for style preferences like "LeetCode-style" or test format
+2. "requirement" is ONLY for missing core functionality, NOT for style preferences
 3. If tests exist and test the core functionality — that's sufficient, don't nitpick test style
 4. Prefer to approve with suggestions rather than block on minor issues
 
@@ -43,12 +45,7 @@ Respond with JSON:
 When in doubt, use NON-BLOCKING severity."""
 
 
-class ReviewerAgent:
-    def __init__(self, settings: Settings, repo: str):
-        self.settings = settings
-        self.github = GitHubClient(settings, repo)
-        self.llm = LLMClient(settings)
-
+class ReviewerAgent(Agent):
     def run(self, pr_number: int, iteration: int = 0) -> dict:
         pr = self.github.get_pull_request(pr_number)
 
@@ -91,25 +88,20 @@ Review the changes. Remember: approve if core functionality works, don't block o
         if not review:
             return {"success": False, "error": "Failed to parse review"}
 
-        issues = review.get("issues", [])
-        issues.extend(ci_issues)
-        review["issues"] = issues
+        for ci_issue in ci_issues:
+            review.issues.append(ReviewIssue(**ci_issue))
 
-        blocking = [i for i in issues if i.get("severity") in BLOCKING_SEVERITIES]
-        non_blocking = [i for i in issues if i.get("severity") in NON_BLOCKING_SEVERITIES]
-
-        approved = len(blocking) == 0
-        review["approved"] = approved
-        review["blocking_count"] = len(blocking)
-        review["non_blocking_count"] = len(non_blocking)
+        blocking = [i for i in review.issues if i.severity in BLOCKING_SEVERITIES]
+        non_blocking = [i for i in review.issues if i.severity in NON_BLOCKING_SEVERITIES]
+        review.approved = len(blocking) == 0
 
         self._post_review(pr_number, review, iteration, ci_passed)
 
         return {
             "success": True,
-            "approved": approved,
-            "summary": review.get("summary", ""),
-            "issues_count": len(issues),
+            "approved": review.approved,
+            "summary": review.summary,
+            "issues_count": len(review.issues),
             "blocking_count": len(blocking),
             "non_blocking_count": len(non_blocking),
         }
@@ -129,61 +121,64 @@ Review the changes. Remember: approve if core functionality works, don't block o
         return ci_issues
 
     def _extract_issue_number(self, body: str) -> int | None:
-        patterns = [r"#(\d+)", r"closes #(\d+)", r"fixes #(\d+)", r"resolves #(\d+)"]
+        patterns = [
+            r"closes #(\d+)",
+            r"fixes #(\d+)",
+            r"resolves #(\d+)",
+            r"#(\d+)",
+        ]
         for pattern in patterns:
             match = re.search(pattern, body.lower())
             if match:
                 return int(match.group(1))
         return None
 
-    def _parse_response(self, response: str) -> dict:
+    def _parse_response(self, response: str) -> ReviewResponse | None:
         try:
             start = response.find("{")
             end = response.rfind("}") + 1
             if start != -1 and end > start:
-                return json.loads(response[start:end])
-        except json.JSONDecodeError:
-            pass
-        return {}
+                data = json.loads(response[start:end])
+                return ReviewResponse.model_validate(data)
+        except (json.JSONDecodeError, ValidationError) as e:
+            logger.error("Failed to parse review response: %s", e)
+        return None
 
-    def _post_review(self, pr_number: int, review: dict, iteration: int, ci_passed: bool) -> None:
-        summary = review.get("summary", "Review completed")
-        issues = review.get("issues", [])
-        approved = review.get("approved", False)
-        meets_requirements = review.get("meets_requirements", False)
+    def _format_body(self, review: ReviewResponse, iteration: int, ci_passed: bool) -> str:
+        header = f"## AI Code Review (Iteration {iteration})\n" if iteration else "## AI Code Review\n"
+        parts = [header]
+        parts.append(f"**Status:** {'✅ Approved' if review.approved else '❌ Changes Requested'}\n")
+        parts.append(f"**Requirements Met:** {'✅ Yes' if review.meets_requirements else '❌ No'}\n")
+        parts.append(f"**CI Status:** {'✅ Passed' if ci_passed else '❌ Failed'}\n")
+        parts.append(f"\n### Summary\n{review.summary}\n")
 
-        blocking = [i for i in issues if i.get("severity") in BLOCKING_SEVERITIES]
-        non_blocking = [i for i in issues if i.get("severity") in NON_BLOCKING_SEVERITIES]
-
-        body_parts = [f"## AI Code Review (Iteration {iteration})\n"] if iteration else ["## AI Code Review\n"]
-        body_parts.append(f"**Status:** {'✅ Approved' if approved else '❌ Changes Requested'}\n")
-        body_parts.append(f"**Requirements Met:** {'✅ Yes' if meets_requirements else '❌ No'}\n")
-        body_parts.append(f"**CI Status:** {'✅ Passed' if ci_passed else '❌ Failed'}\n")
-        body_parts.append(f"\n### Summary\n{summary}\n")
+        blocking = [i for i in review.issues if i.severity in BLOCKING_SEVERITIES]
+        non_blocking = [i for i in review.issues if i.severity in NON_BLOCKING_SEVERITIES]
 
         if blocking:
-            body_parts.append("\n### 🚫 Blocking Issues (must fix)\n")
+            parts.append("\n### 🚫 Blocking Issues (must fix)\n")
             for issue in blocking:
-                severity = issue.get("severity", "error").upper()
-                desc = issue.get("description", "")
                 file_info = self._format_file_info(issue)
-                source = " [CI]" if issue.get("source") == "ci" else ""
-                body_parts.append(f"- **[{severity}]{source}** {desc}{file_info}\n")
+                source = " [CI]" if issue.source == "ci" else ""
+                parts.append(f"- **[{issue.severity.upper()}]{source}** {issue.description}{file_info}\n")
 
         if non_blocking:
-            body_parts.append("\n### 💡 Suggestions (non-blocking)\n")
+            parts.append("\n### 💡 Suggestions (non-blocking)\n")
             for issue in non_blocking:
-                severity = issue.get("severity", "suggestion").upper()
-                desc = issue.get("description", "")
                 file_info = self._format_file_info(issue)
-                body_parts.append(f"- **[{severity}]** {desc}{file_info}\n")
+                parts.append(f"- **[{issue.severity.upper()}]** {issue.description}{file_info}\n")
 
-        self.github.add_pr_comment(pr_number, "".join(body_parts))
+        return "".join(parts)
 
-    def _format_file_info(self, issue: dict) -> str:
-        if not issue.get("file"):
+    def _format_file_info(self, issue: ReviewIssue) -> str:
+        if not issue.file:
             return ""
-        file_info = f" (`{issue['file']}"
-        if issue.get("line"):
-            file_info += f":{issue['line']}"
-        return file_info + "`)"
+        info = f" (`{issue.file}"
+        if issue.line:
+            info += f":{issue.line}"
+        return info + "`)"
+
+    def _post_review(self, pr_number: int, review: ReviewResponse, iteration: int, ci_passed: bool) -> None:
+        event = "APPROVE" if review.approved else "REQUEST_CHANGES"
+        body = self._format_body(review, iteration, ci_passed)
+        self.github.create_pr_review(pr_number, body=body, event=event)
