@@ -3,7 +3,9 @@ import re
 import time
 
 from src.agents.code_agent import CodeAgent
+from src.agents.pr_desc_agent import PRDescAgent
 from src.agents.reviewer_agent import ReviewerAgent
+from src.agents.test_gen_agent import TestGenAgent
 from src.config import Settings
 from src.github_client import GitHubClient
 
@@ -40,6 +42,16 @@ def run_solve(settings: Settings, repo: str, issue_number: int, force_new: bool 
 def run_review(settings: Settings, repo: str, pr_number: int, iteration: int = 0) -> dict:
     agent = ReviewerAgent(settings, repo)
     return agent.run(pr_number, iteration)
+
+
+def run_describe(settings: Settings, repo: str, pr_number: int, force: bool = False) -> dict:
+    agent = PRDescAgent(settings, repo)
+    return agent.run(pr_number, force=force)
+
+
+def run_test_gen(settings: Settings, repo: str, pr_number: int) -> dict:
+    agent = TestGenAgent(settings, repo)
+    return agent.run(pr_number)
 
 
 def run_cycle(settings: Settings, repo: str, issue_number: int, on_event=None, force_new: bool = False) -> dict:

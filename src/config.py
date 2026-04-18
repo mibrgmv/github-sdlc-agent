@@ -14,8 +14,13 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4o-mini"
     openai_base_url: str | None = None
     max_iterations: int = 5
+    enabled_agents: str = "code,reviewer,pr_desc,test_gen"
 
     model_config = {"env_file": ".env", "extra": "ignore"}
+
+    @property
+    def enabled_agents_set(self) -> set[str]:
+        return {a.strip() for a in self.enabled_agents.split(",") if a.strip()}
 
     @model_validator(mode="after")
     def load_private_key_from_file(self):

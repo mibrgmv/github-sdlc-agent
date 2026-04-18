@@ -33,3 +33,19 @@ class CodeChangesResponse(BaseModel):
     commit_message: str
     pr_title: str
     pr_body: str
+
+
+class PRDescriptionResponse(BaseModel):
+    summary: str
+    body: str
+
+
+class GeneratedTest(BaseModel):
+    path: str
+    content: str
+
+
+class TestGenResponse(BaseModel):
+    analysis: str
+    tests: list[GeneratedTest]
+    commit_message: str

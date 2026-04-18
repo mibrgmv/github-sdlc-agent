@@ -4,9 +4,7 @@ import re
 
 from pydantic import ValidationError
 
-from src.config import Settings
-from src.github_client import GitHubClient
-from src.llm_client import LLMClient
+from src.agents.base import Agent
 from src.models import BLOCKING_SEVERITIES, NON_BLOCKING_SEVERITIES, ReviewIssue, ReviewResponse
 
 logger = logging.getLogger(__name__)
@@ -47,12 +45,7 @@ Respond with JSON:
 When in doubt, use NON-BLOCKING severity."""
 
 
-class ReviewerAgent:
-    def __init__(self, settings: Settings, repo: str):
-        self.settings = settings
-        self.github = GitHubClient(settings, repo)
-        self.llm = LLMClient(settings)
-
+class ReviewerAgent(Agent):
     def run(self, pr_number: int, iteration: int = 0) -> dict:
         pr = self.github.get_pull_request(pr_number)
 

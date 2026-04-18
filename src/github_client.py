@@ -88,6 +88,24 @@ class GitHubClient:
             diff_parts.append("")
         return "\n".join(diff_parts)
 
+    def get_pr_files(self, pr_number: int) -> list[dict]:
+        pr = self.get_pull_request(pr_number)
+        return [
+            {"filename": f.filename, "status": f.status, "additions": f.additions}
+            for f in pr.get_files()
+        ]
+
+    @_retry_on_5xx
+    def update_pull_request(self, pr_number: int, body: str | None = None, title: str | None = None) -> None:
+        pr = self.get_pull_request(pr_number)
+        kwargs = {}
+        if body is not None:
+            kwargs["body"] = body
+        if title is not None:
+            kwargs["title"] = title
+        if kwargs:
+            pr.edit(**kwargs)
+
     def get_pr_comments(self, pr_number: int) -> list[dict]:
         pr = self.get_pull_request(pr_number)
         comments = []

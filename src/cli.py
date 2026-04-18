@@ -3,7 +3,7 @@ import sys
 import click
 
 from src.config import get_settings
-from src.runner import run_cycle, run_review, run_solve
+from src.runner import run_cycle, run_describe, run_review, run_solve, run_test_gen
 
 
 def validate_settings(settings):
@@ -67,6 +67,47 @@ def review(pr_number: int, repo: str):
         click.echo(f"Summary: {result.get('summary', 'N/A')}")
         if result.get("issues_count", 0) > 0:
             click.echo(f"Issues found: {result['issues_count']}")
+    else:
+        click.echo(f"Error: {result.get('error', 'Unknown error')}", err=True)
+        sys.exit(1)
+
+
+@cli.command()
+@click.argument("pr_number", type=int)
+@click.option("--repo", required=True, help="Target repository (owner/repo)")
+@click.option("--force", is_flag=True, help="Overwrite existing PR body")
+def describe(pr_number: int, repo: str, force: bool):
+    settings = get_settings()
+    validate_settings(settings)
+
+    click.echo(f"Generating description for PR #{pr_number} in {repo}...")
+    result = run_describe(settings, repo, pr_number, force=force)
+
+    if result.get("success"):
+        if result.get("skipped"):
+            click.echo(f"Skipped: {result.get('reason')}")
+        else:
+            click.echo(f"Description updated: {result.get('summary', '')}")
+    else:
+        click.echo(f"Error: {result.get('error', 'Unknown error')}", err=True)
+        sys.exit(1)
+
+
+@cli.command("gen-tests")
+@click.argument("pr_number", type=int)
+@click.option("--repo", required=True, help="Target repository (owner/repo)")
+def gen_tests(pr_number: int, repo: str):
+    settings = get_settings()
+    validate_settings(settings)
+
+    click.echo(f"Generating tests for PR #{pr_number} in {repo}...")
+    result = run_test_gen(settings, repo, pr_number)
+
+    if result.get("success"):
+        if result.get("skipped"):
+            click.echo(f"Skipped: {result.get('reason')}")
+        else:
+            click.echo(f"Added {result['tests_added']} test file(s), commit {result['commit']}")
     else:
         click.echo(f"Error: {result.get('error', 'Unknown error')}", err=True)
         sys.exit(1)

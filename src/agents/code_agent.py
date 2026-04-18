@@ -7,9 +7,7 @@ from pathlib import Path
 from git import Repo
 from pydantic import ValidationError
 
-from src.config import Settings
-from src.github_client import GitHubClient
-from src.llm_client import LLMClient
+from src.agents.base import Agent
 from src.models import CodeChangesResponse
 
 logger = logging.getLogger(__name__)
@@ -46,12 +44,7 @@ Guidelines:
 - Ensure code is functional and complete"""
 
 
-class CodeAgent:
-    def __init__(self, settings: Settings, repo: str):
-        self.settings = settings
-        self.github = GitHubClient(settings, repo)
-        self.llm = LLMClient(settings)
-
+class CodeAgent(Agent):
     def run(self, issue_number: int, force_new: bool = False) -> dict:
         issue = self.github.get_issue(issue_number)
 

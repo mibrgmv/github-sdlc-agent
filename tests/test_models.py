@@ -1,7 +1,14 @@
 import pytest
 from pydantic import ValidationError
 
-from src.models import CodeChangesResponse, FileChange, ReviewIssue, ReviewResponse
+from src.models import (
+    CodeChangesResponse,
+    FileChange,
+    PRDescriptionResponse,
+    ReviewIssue,
+    ReviewResponse,
+    TestGenResponse,
+)
 
 
 def test_review_response_valid():
@@ -91,3 +98,27 @@ def test_file_change_all_actions():
     for action in ("create", "modify", "delete"):
         change = FileChange(path="f.py", action=action)
         assert change.action == action
+
+
+def test_pr_description_response_valid():
+    r = PRDescriptionResponse(summary="s", body="b")
+    assert r.summary == "s"
+
+
+def test_pr_description_response_missing():
+    with pytest.raises(ValidationError):
+        PRDescriptionResponse.model_validate({"summary": "only"})
+
+
+def test_test_gen_response_valid():
+    r = TestGenResponse.model_validate({
+        "analysis": "x",
+        "tests": [{"path": "tests/test_a.py", "content": "pass"}],
+        "commit_message": "m",
+    })
+    assert len(r.tests) == 1
+
+
+def test_test_gen_response_empty_tests():
+    r = TestGenResponse.model_validate({"analysis": "nothing", "tests": [], "commit_message": "m"})
+    assert r.tests == []
